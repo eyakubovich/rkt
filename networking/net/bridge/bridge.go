@@ -93,7 +93,7 @@ func bridgeByName(name string) (*netlink.Bridge, error) {
 	return br, nil
 }
 
-func ensureBridge(brName string, mtu int, ipn *net.IPNet) (*netlink.Bridge, error) {
+func ensureBridge(brName string, mtu int) (*netlink.Bridge, error) {
 	br := &netlink.Bridge{
 		LinkAttrs: netlink.LinkAttrs{
 			Name: brName,
@@ -117,24 +117,16 @@ func ensureBridge(brName string, mtu int, ipn *net.IPNet) (*netlink.Bridge, erro
 		return nil, err
 	}
 
-	if ipn != nil {
-		return br, ensureBridgeAddr(br, ipn)
-	}
-
 	return br, nil
 }
 
-func setupVeth(contID types.UUID, netns string, br *netlink.Bridge, ifName string, mtu int, ipConf *ipam.IPConfig) error {
+func setupVeth(contID types.UUID, netns string, br *netlink.Bridge, ifName string, mtu int) error {
 	var hostVethName string
 
 	err := util.WithNetNSPath(netns, func(hostNS *os.File) error {
 		// create the veth pair in the container and move host end into host netns
 		hostVeth, _, err := util.SetupVeth(contID.String(), ifName, mtu, hostNS)
 		if err != nil {
-			return err
-		}
-
-		if err = ipam.ApplyIPConfig(ifName, ipConf); err != nil {
 			return err
 		}
 
@@ -164,17 +156,9 @@ func calcGatewayIP(ipn *net.IPNet) net.IP {
 	return util.NextIP(nid)
 }
 
-func setupBridge(n *Net, ipConf *ipam.IPConfig) (*netlink.Bridge, error) {
-	var gwn *net.IPNet
-	if n.IsGW {
-		gwn = &net.IPNet{
-			IP:   ipConf.Gateway,
-			Mask: ipConf.IP.Mask,
-		}
-	}
-
+func setupBridge(n *Net) (*netlink.Bridge, error) {
 	// create bridge if necessary
-	br, err := ensureBridge(n.BrName, n.MTU, gwn)
+	br, err := ensureBridge(n.BrName, n.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bridge %q: %v", n.BrName, err)
 	}
@@ -188,6 +172,15 @@ func cmdAdd(args *util.CmdArgs) error {
 		return err
 	}
 
+	br, err := setupBridge(n)
+	if err != nil {
+		return err
+	}
+
+	if err = setupVeth(args.ContID, args.Netns, br, args.IfName, n.MTU); err != nil {
+		return err
+	}
+
 	// run the IPAM plugin and get back the config to apply
 	ipConf, err := ipam.ExecPluginAdd(n.Net.IPAM.Type)
 	if err != nil {
@@ -198,12 +191,21 @@ func cmdAdd(args *util.CmdArgs) error {
 		ipConf.Gateway = calcGatewayIP(ipConf.IP)
 	}
 
-	br, err := setupBridge(n, ipConf)
-	if err != nil {
-		return err
+	if n.IsGW {
+		gwn := &net.IPNet{
+			IP:   ipConf.Gateway,
+			Mask: ipConf.IP.Mask,
+		}
+
+		if err = ensureBridgeAddr(br, gwn); err != nil {
+			return err
+		}
 	}
 
-	if err = setupVeth(args.ContID, args.Netns, br, args.IfName, n.MTU, ipConf); err != nil {
+	err = util.WithNetNSPath(args.Netns, func(hostNS *os.File) error {
+		return ipam.ApplyIPConfig(args.IfName, ipConf)
+	})
+	if err != nil {
 		return err
 	}
 

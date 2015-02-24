@@ -54,14 +54,12 @@ func loadConf(path string) (*Net, error) {
 
 func modeFromString(s string) (netlink.MacvlanMode, error) {
 	switch s {
-	case "":
+	case "", "bridge":
 		return netlink.MACVLAN_MODE_BRIDGE, nil
 	case "private":
 		return netlink.MACVLAN_MODE_PRIVATE, nil
 	case "vepa":
 		return netlink.MACVLAN_MODE_VEPA, nil
-	case "bridge":
-		return netlink.MACVLAN_MODE_BRIDGE, nil
 	case "passthru":
 		return netlink.MACVLAN_MODE_PASSTHRU, nil
 	default:
@@ -69,7 +67,7 @@ func modeFromString(s string) (netlink.MacvlanMode, error) {
 	}
 }
 
-func createMacvlan(conf *Net, ifName string, netns *os.File) error {
+func createMacvlan(conf *Net, args *util.CmdArgs, netns *os.File) error {
 	mode, err := modeFromString(conf.Mode)
 	if err != nil {
 		return err
@@ -80,10 +78,14 @@ func createMacvlan(conf *Net, ifName string, netns *os.File) error {
 		return fmt.Errorf("failed to lookup master %q: %v", conf.Master, err)
 	}
 
+	// due to kernel bug we have to create with tmpname or it might
+	// collide with the name on the host and error out
+	tmpName := "veth" + args.ContID.String()[:4]
+
 	mv := &netlink.Macvlan{
 		LinkAttrs: netlink.LinkAttrs{
 			MTU:         conf.MTU,
-			Name:        ifName,
+			Name:        tmpName,
 			ParentIndex: m.Attrs().Index,
 			Namespace:   netlink.NsFd(int(netns.Fd())),
 		},
@@ -94,7 +96,13 @@ func createMacvlan(conf *Net, ifName string, netns *os.File) error {
 		return fmt.Errorf("failed to create macvlan: %v", err)
 	}
 
-	return err
+	return util.WithNetNS(netns, func(_ *os.File) error {
+		err := renameLink(tmpName, args.IfName)
+		if err != nil {
+			return fmt.Errorf("failed to rename macvlan to %q: %v", args.IfName, err)
+		}
+		return nil
+	})
 }
 
 func cmdAdd(args *util.CmdArgs) error {
@@ -109,8 +117,7 @@ func cmdAdd(args *util.CmdArgs) error {
 	}
 	defer netns.Close()
 
-	tmpName := "veth" + args.ContID.String()[:4]
-	if err = createMacvlan(n, tmpName, netns); err != nil {
+	if err = createMacvlan(n, args, netns); err != nil {
 		return err
 	}
 
@@ -121,11 +128,6 @@ func cmdAdd(args *util.CmdArgs) error {
 	}
 
 	err = util.WithNetNS(netns, func(_ *os.File) error {
-		err := renameLink(tmpName, args.IfName)
-		if err != nil {
-			return fmt.Errorf("failed to rename macvlan to %q: %v", args.IfName, err)
-		}
-
 		return ipam.ApplyIPConfig(args.IfName, ipConf)
 	})
 	if err != nil {

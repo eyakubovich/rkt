@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
 
 	"github.com/coreos/rocket/networking/ipam"
 	"github.com/coreos/rocket/networking/ipam/static/backend/disk"
@@ -46,13 +44,7 @@ func cmdAdd(args *util.CmdArgs) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(ipConf, "", "    ")
-	if err != nil {
-		return err
-	}
-
-	_, err = os.Stdout.Write(data)
-	return err
+	return ipam.PrintIPConfig(ipConf)
 }
 
 func cmdDel(args *util.CmdArgs) error {

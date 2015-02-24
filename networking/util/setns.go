@@ -72,11 +72,7 @@ func WithNetNS(ns *os.File, f func(*os.File) error) error {
 	if err = SetNS(ns, syscall.CLONE_NEWNET); err != nil {
 		return fmt.Errorf("Error switching to ns %v: %v", ns.Name(), err)
 	}
+	defer SetNS(thisNS, syscall.CLONE_NEWNET)
 
-	if err = f(thisNS); err != nil {
-		return err
-	}
-
-	// switch back
-	return SetNS(thisNS, syscall.CLONE_NEWNET)
+	return f(thisNS)
 }

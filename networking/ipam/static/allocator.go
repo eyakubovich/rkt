@@ -200,14 +200,14 @@ func evenIP(ip net.IP) bool {
 	return i[len(i)-1]%2 == 0
 }
 
-func parseIPNets(ipnets []string) ([]net.IPNet, error) {
-	n := []net.IPNet{}
+func parseIPNets(ipnets []string) ([]ipam.Route, error) {
+	routes := []ipam.Route{}
 	for _, s := range ipnets {
-		ipn, err := util.ParseCIDR(s)
+		dst, err := util.ParseCIDR(s)
 		if err != nil {
 			return nil, err
 		}
-		n = append(n, *ipn)
+		routes = append(routes, ipam.Route{Dst: *dst})
 	}
-	return n, nil
+	return routes, nil
 }

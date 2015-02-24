@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -15,17 +16,62 @@ import (
 	"github.com/coreos/rocket/networking/util"
 )
 
+type Route struct {
+	Dst     net.IPNet
+	Gateway net.IP // if nil, def gw is used
+}
+
+type route struct {
+	Dst     string `json:"dst"`
+	Gateway string `json:"gw,omitempty"`
+}
+
 // L3 config value for interface
 type IPConfig struct {
 	IP      *net.IPNet
 	Gateway net.IP
-	Routes  []net.IPNet
+	Routes  []Route
 }
 
 type ipConfig struct {
-	IP      string   `json:"ip"`
-	Gateway string   `json:"gateway,omitempty"`
-	Routes  []string `json:"routes,omitempty"`
+	IP      string  `json:"ip"`
+	Gateway string  `json:"gateway,omitempty"`
+	Routes  []Route `json:"routes,omitempty"`
+}
+
+func (r *Route) UnmarshalJSON(data []byte) error {
+	rr := route{}
+	if err := json.Unmarshal(data, &rr); err != nil {
+		return err
+	}
+
+	_, dst, err := net.ParseCIDR(rr.Dst)
+	if err != nil {
+		return fmt.Errorf("error parsing dst: %v", err)
+	}
+
+	r.Dst = *dst
+
+	if rr.Gateway != "" {
+		r.Gateway = net.ParseIP(rr.Gateway)
+		if r.Gateway == nil {
+			return fmt.Errorf("error parsing Gateway: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func (r *Route) MarshalJSON() ([]byte, error) {
+	rr := route{
+		Dst: r.Dst.String(),
+	}
+
+	if r.Gateway != nil {
+		rr.Gateway = r.Gateway.String()
+	}
+
+	return json.Marshal(rr)
 }
 
 func (c *IPConfig) UnmarshalJSON(data []byte) error {
@@ -46,35 +92,25 @@ func (c *IPConfig) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	routes := []net.IPNet{}
-
-	for _, r := range ipc.Routes {
-		dst, err := util.ParseCIDR(r)
-		if err != nil {
-			return err
-		}
-
-		routes = append(routes, *dst)
-	}
-
 	c.IP = ip
 	c.Gateway = gw
-	c.Routes = routes
+	c.Routes = ipc.Routes
 
 	return nil
 }
 
 func (c *IPConfig) MarshalJSON() ([]byte, error) {
+	if c.IP == nil {
+		return nil, fmt.Errorf("IPConfig.IP cannot be nil")
+	}
+
 	ipc := ipConfig{
-		IP: c.IP.String(),
+		IP:     c.IP.String(),
+		Routes: c.Routes,
 	}
 
 	if c.Gateway != nil {
 		ipc.Gateway = c.Gateway.String()
-	}
-
-	for _, dst := range c.Routes {
-		ipc.Routes = append(ipc.Routes, dst.String())
 	}
 
 	return json.Marshal(ipc)
@@ -115,6 +151,7 @@ func ExecPluginAdd(plugin string) (*IPConfig, error) {
 		Stderr: os.Stderr,
 	}
 	if err := c.Run(); err != nil {
+		log.Printf("IPAM exited with err: %v", err)
 		return nil, err
 	}
 
@@ -157,14 +194,28 @@ func ApplyIPConfig(ifName string, ipConf *IPConfig) error {
 		return fmt.Errorf("failed to add IP addr to %q: %v", ifName, err)
 	}
 
-	for _, dst := range ipConf.Routes {
-		if err = util.AddRoute(&dst, ipConf.Gateway, link); err != nil {
+	for _, r := range ipConf.Routes {
+		gw := ipConf.Gateway
+		if r.Gateway != nil {
+			gw = r.Gateway
+		}
+		if err = util.AddRoute(&r.Dst, gw, link); err != nil {
 			// we skip over duplicate routes as we assume the first one wins
 			if !os.IsExist(err) {
-				return fmt.Errorf("failed to add route '%v via %v dev %v': %v", dst.String(), ipConf.Gateway, ifName, err)
+				return fmt.Errorf("failed to add route '%v via %v dev %v': %v", r.Dst.String(), gw.String(), ifName, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+func PrintIPConfig(c *IPConfig) error {
+	data, err := json.MarshalIndent(c, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	_, err = os.Stdout.Write(data)
+	return err
 }
