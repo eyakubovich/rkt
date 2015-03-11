@@ -108,7 +108,7 @@
 		},
 		{
 			"ImportPath": "github.com/d2g/dhcp4client",
-			"Rev": "cba200870a97e34e5eae8fb2f64bf904c42bccca"
+			"Rev": "9bbb300b63570d77545870a45381af509f73b0a9"
 		},
 		{
 			"ImportPath": "github.com/gorilla/context",

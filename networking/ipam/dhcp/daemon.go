@@ -25,9 +25,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/coreos/rocket/Godeps/_workspace/src/github.com/appc/spec/schema/types"
 	"github.com/coreos/rocket/Godeps/_workspace/src/github.com/d2g/dhcp4"
 	"github.com/coreos/rocket/Godeps/_workspace/src/github.com/d2g/dhcp4client"
 	"github.com/coreos/rocket/Godeps/_workspace/src/github.com/vishvananda/netlink"
+
 	"github.com/coreos/rocket/networking/ipam"
 	"github.com/coreos/rocket/networking/util"
 )
@@ -35,7 +37,9 @@ import (
 const listenFdsStart = 3
 const tries = 3
 
-type DHCP struct{}
+type DHCP struct {
+	leases map[types.UUID]dhcp4.Packet
+}
 
 func recvOffer(c *dhcp4client.Client) (*dhcp4.Packet, error) {
 	for i := 0; i < tries; i++ {
@@ -99,11 +103,10 @@ func (d *DHCP) Add(args *util.CmdArgs, reply *ipam.IPConfig) error {
 		c := &dhcp4client.Client{
 			MACAddress:  link.Attrs().HardwareAddr,
 			Timeout:     5 * time.Second,
-			Ifindex:     link.Attrs().Index,
 			NoBcastFlag: true,
 		}
 
-		if err = c.ConnectPkt(); err != nil {
+		if err = c.ConnectPacket(link.Attrs().Index); err != nil {
 			return fmt.Errorf("error binding to UDP port 68: %v", err)
 		}
 		defer c.Close()
@@ -117,6 +120,8 @@ func (d *DHCP) Add(args *util.CmdArgs, reply *ipam.IPConfig) error {
 		if err != nil {
 			return err
 		}
+
+		d.leases[args.ContID] = ack
 
 		opts := ack.ParseOptions()
 
@@ -134,7 +139,35 @@ func (d *DHCP) Add(args *util.CmdArgs, reply *ipam.IPConfig) error {
 
 func (d *DHCP) Del(args *util.CmdArgs, reply *struct{}) error {
 	log.Print("Releasing DHCP Lease...")
-	return nil
+
+	ack, ok := d.leases[args.ContID]
+	if !ok {
+		return fmt.Errorf("lease for %v not found", args.ContID)
+	}
+
+	return util.WithNetNSPath(args.Netns, func(_ *os.File) error {
+		link, err := netlink.LinkByName(args.IfName)
+		if err != nil {
+			return fmt.Errorf("error looking up %q", args.IfName)
+		}
+
+		c := &dhcp4client.Client{
+			MACAddress:  link.Attrs().HardwareAddr,
+			Timeout:     5 * time.Second,
+			NoBcastFlag: true,
+		}
+
+		if err = c.ConnectPacket(link.Attrs().Index); err != nil {
+			return fmt.Errorf("error binding to UDP port 68: %v", err)
+		}
+		defer c.Close()
+
+		if err = c.SendReleasePacket(ack); err != nil {
+			return fmt.Errorf("failed to send DHCPRELEASE")
+		}
+
+		return nil
+	})
 }
 
 func getListener() (net.Listener, error) {
@@ -154,7 +187,7 @@ func getListener() (net.Listener, error) {
 	return net.FileListener(os.NewFile(uintptr(listenFdsStart), "listen"))
 }
 
-func runServer() {
+func runDaemon() {
 	l, err := getListener()
 	if err != nil {
 		log.Printf("Error getting listener: %v", err)
