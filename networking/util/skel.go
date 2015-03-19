@@ -22,16 +22,16 @@ import (
 )
 
 type CmdArgs struct {
-	PodID    types.UUID
-	Netns    string
-	IfName   string
-	NetConf  string
-	NetName  string
-	IPAMPath string
+	PodID   types.UUID
+	Netns   string
+	IfName  string
+	NetConf string
+	NetName string
+	Path    string
 }
 
 func PluginMain(cmdAdd, cmdDel func(_ *CmdArgs) error) {
-	var cmd, podID, netns, ifName, netConf, netName, ipamPath string
+	var cmd, podID, netns, ifName, netConf, netName, path string
 
 	vars := []struct {
 		name string
@@ -43,7 +43,7 @@ func PluginMain(cmdAdd, cmdDel func(_ *CmdArgs) error) {
 		{"RKT_NETPLUGIN_IFNAME", &ifName},
 		{"RKT_NETPLUGIN_NETCONF", &netConf},
 		{"RKT_NETPLUGIN_NETNAME", &netName},
-		{"RKT_NETPLUGIN_IPAMPATH", &ipamPath},
+		{"RKT_NETPLUGIN_PATH", &path},
 	}
 
 	argsMissing := false
@@ -66,12 +66,12 @@ func PluginMain(cmdAdd, cmdDel func(_ *CmdArgs) error) {
 	}
 
 	args := &CmdArgs{
-		PodID:    *pid,
-		Netns:    netns,
-		IfName:   ifName,
-		NetConf:  netConf,
-		NetName:  netName,
-		IPAMPath: ipamPath,
+		PodID:   *pid,
+		Netns:   netns,
+		IfName:  ifName,
+		NetConf: netConf,
+		NetName: netName,
+		Path:    path,
 	}
 
 	switch cmd {

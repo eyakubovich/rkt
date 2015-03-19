@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 
 	"github.com/coreos/rkt/Godeps/_workspace/src/github.com/vishvananda/netlink"
 
@@ -80,20 +77,6 @@ func (c *IPConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ipc)
 }
 
-func findIPAMPlugin(plugin string) string {
-	// try 3rd-party path first
-	paths := strings.Split(os.Getenv("RKT_NETPLUGIN_IPAMPATH"), ":")
-
-	for _, p := range paths {
-		fullname := filepath.Join(p, plugin)
-		if fi, err := os.Stat(fullname); err == nil && fi.Mode().IsRegular() {
-			return fullname
-		}
-	}
-
-	return ""
-}
-
 // Executes IPAM plugin, assuming RKT_NETPLUGIN_COMMAND == ADD.
 // Parses and returns resulting IPConfig
 func ExecPluginAdd(plugin string) (*IPConfig, error) {
@@ -101,25 +84,14 @@ func ExecPluginAdd(plugin string) (*IPConfig, error) {
 		return nil, fmt.Errorf("RKT_NETPLUGIN_COMMAND is not ADD")
 	}
 
-	pluginPath := findIPAMPlugin(plugin)
-	if pluginPath == "" {
-		return nil, fmt.Errorf("could not find %q plugin", plugin)
-	}
-
 	stdout := &bytes.Buffer{}
-
-	c := exec.Cmd{
-		Path:   pluginPath,
-		Args:   []string{pluginPath},
-		Stdout: stdout,
-		Stderr: os.Stderr,
-	}
-	if err := c.Run(); err != nil {
+	err := util.RunPlugin(plugin, stdout)
+	if err != nil {
 		return nil, err
 	}
 
 	ipConf := &IPConfig{}
-	err := json.Unmarshal(stdout.Bytes(), ipConf)
+	err = json.Unmarshal(stdout.Bytes(), ipConf)
 	return ipConf, err
 }
 
@@ -129,17 +101,7 @@ func ExecPluginDel(plugin string) error {
 		return fmt.Errorf("RKT_NETPLUGIN_COMMAND is not DEL")
 	}
 
-	pluginPath := findIPAMPlugin(plugin)
-	if pluginPath == "" {
-		return fmt.Errorf("could not find %q plugin", plugin)
-	}
-
-	c := exec.Cmd{
-		Path:   pluginPath,
-		Args:   []string{pluginPath},
-		Stderr: os.Stderr,
-	}
-	return c.Run()
+	return util.RunPlugin(plugin, nil)
 }
 
 func ApplyIPConfig(ifName string, ipConf *IPConfig) error {

@@ -94,7 +94,7 @@ func (e *podEnv) execNetPlugin(cmd string, n *activeNet, netns string) ([]byte, 
 		{"RKT_NETPLUGIN_IFNAME", n.Runtime.IfName},
 		{"RKT_NETPLUGIN_NETNAME", n.Conf.Name},
 		{"RKT_NETPLUGIN_NETCONF", n.Runtime.ConfPath},
-		{"RKT_NETPLUGIN_IPAMPATH", strings.Join(e.pluginPaths(), ":")},
+		{"RKT_NETPLUGIN_PATH", strings.Join(e.pluginPaths(), ":")},
 	}
 
 	stdout := &bytes.Buffer{}
